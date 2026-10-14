@@ -1,0 +1,85 @@
+contract:
+  name: sap-service-invoices
+  type: source
+  domain: finance
+  owner: controladoria
+  technical_owner: data-engineering
+  source_system: sap-business-one
+  description: Notas fiscais de servico de entrada (CFOP 1933/2933) com impostos retidos, consolidando duas empresas em bancos SAP B1 separados.
+  status: draft
+  version: 0.2.0
+
+dataset:
+  name: service_invoices
+  layer: bronze
+  storage_location: sap-hana-on-premise
+  physical_tables:
+    - SBO_CONTOSO_PRD.OPCH
+    - SBO_CONTOSO_PRD.PCH1
+    - SBO_CONTOSO_PRD.PCH4
+    - SBO_CONTOSO_PRD.PCH5
+    - SBO_CONTOSO_PRD.PCH12
+    - SBO_CONTOSO_PRD.OSTT
+    - SBO_FABRIKAM_PRD.OPCH
+    - SBO_FABRIKAM_PRD.PCH1
+    - SBO_FABRIKAM_PRD.PCH4
+    - SBO_FABRIKAM_PRD.PCH5
+    - SBO_FABRIKAM_PRD.PCH12
+    - SBO_FABRIKAM_PRD.OSTT
+  fabric_replication: candidate_for_bronze_or_silver_lightweight
+  load_mode: full
+  refresh_frequency: full_snapshot_since_start_date
+  grain: one row per service invoice header per company
+  primary_keys:
+    - company
+    - doc_entry
+
+source:
+  application: sap-business-one
+  database: SBO_CONTOSO_PRD and SBO_FABRIKAM_PRD
+  engine: hana
+  access_method: odbc
+
+schema:
+  fields:
+    - {name: company, type: string, nullable: false, description: Empresa de origem (CONTOSO ou FABRIKAM)., source: literal_per_union_branch}
+    - {name: doc_entry, type: integer, nullable: false, description: Chave interna da nota., source: OPCH.DocEntry}
+    - {name: doc_num, type: integer, nullable: false, description: Numero do documento., source: OPCH.DocNum}
+    - {name: posting_date, type: date, nullable: false, description: Data de lancamento., source: OPCH.DocDate}
+    - {name: document_date, type: date, nullable: true, description: Data fiscal do documento., source: OPCH.TaxDate}
+    - {name: vendor_code, type: string, nullable: true, description: Codigo do prestador., source: OPCH.CardCode}
+    - {name: vendor_name, type: string, nullable: true, description: Nome do prestador., source: OPCH.CardName}
+    - {name: vendor_tax_id, type: string, nullable: true, description: CNPJ/CPF do prestador; NULL quando ausente., source: PCH12.TaxId0/TaxId4}
+    - {name: branch_name, type: string, nullable: true, description: Filial., source: OPCH.BPLName}
+    - {name: invoice_number, type: integer, nullable: true, description: Numero da nota fiscal (serial)., source: OPCH.Serial}
+    - {name: purchase_order_ref, type: string, nullable: true, description: Pedido de compra de origem (BaseType 22)., source: PCH1.BaseRef}
+    - {name: is_cancelled, type: boolean, nullable: false, description: Nota cancelada no SAP., source: OPCH.CANCELED}
+    - {name: document_total, type: decimal, nullable: true, unit: currency_brl, description: Total da nota., source: OPCH.DocTotal}
+    - {name: lines_total, type: decimal, nullable: true, unit: currency_brl, description: Soma das linhas de servico., source: PCH1.LineTotal}
+    - {name: iss_amount, type: decimal, nullable: true, unit: currency_brl, description: ISS (tipo de imposto 'ISS' em OSTT)., source: PCH4.TaxSum}
+    - {name: inss_amount, type: decimal, nullable: true, unit: currency_brl, description: INSS retido., source: PCH5.WTAmnt}
+    - {name: irrf_amount, type: decimal, nullable: true, unit: currency_brl, description: IRRF retido., source: PCH5.WTAmnt}
+    - {name: pis_amount, type: decimal, nullable: true, unit: currency_brl, description: PIS retido., source: PCH5.WTAmnt}
+    - {name: cofins_amount, type: decimal, nullable: true, unit: currency_brl, description: COFINS retido., source: PCH5.WTAmnt}
+    - {name: csll_amount, type: decimal, nullable: true, unit: currency_brl, description: CSLL retido., source: PCH5.WTAmnt}
+    - {name: csrf_amount, type: decimal, nullable: true, unit: currency_brl, description: CSRF retido (codigo combinado); pode ficar vazio em todo um run., source: PCH5.WTAmnt}
+
+quality_rules:
+  - name: company_and_doc_entry_unique
+    description: A combinacao company e doc_entry deve ser unica.
+    severity: critical
+
+  - name: withholding_codes_mapped_explicitly
+    description: Cada codigo de retencao entra em uma unica coluna (tabela tax_codes no SQL).
+    severity: critical
+
+  - name: lines_total_not_above_document_total
+    description: lines_total nao deve ser maior que document_total.
+    severity: warning
+
+known_limitations:
+  - Os codigos de retencao (WT-*) sao ficticios; em um ambiente real vem do cadastro OWHT de cada empresa.
+  - Apenas CFOP 1933 e 2933 sao considerados servico.
+
+open_questions:
+  - Existem outros CFOPs de servico a considerar?

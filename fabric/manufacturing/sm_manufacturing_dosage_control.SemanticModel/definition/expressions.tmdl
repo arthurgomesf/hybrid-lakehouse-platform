@@ -1,0 +1,7 @@
+expression 'DirectLake - lh_manufacturing' =
+		let
+		    Source = AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/<workspace-id>/<lakehouse-id>", [HierarchicalNavigation=true])
+		in
+		    Source
+
+	annotation PBI_IncludeFutureArtifacts = False

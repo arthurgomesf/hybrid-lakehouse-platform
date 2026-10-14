@@ -1,0 +1,68 @@
+contract:
+  name: sap-return-transfers
+  type: source
+  domain: finance
+  owner: controladoria
+  technical_owner: data-engineering
+  source_system: sap-business-one
+  description: Linhas abertas de pedidos de transferencia (OWTQ/WTQ1) com a primeira transferencia de estoque gerada (OWTR/WTR1) e o lead time entre as duas.
+  status: draft
+  version: 0.2.0
+
+dataset:
+  name: return_transfers
+  layer: bronze
+  storage_location: sap-hana-on-premise
+  physical_tables:
+    - SBO_CONTOSO_PRD.OWTQ
+    - SBO_CONTOSO_PRD.WTQ1
+    - SBO_CONTOSO_PRD.OWTR
+    - SBO_CONTOSO_PRD.WTR1
+  fabric_replication: candidate_for_bronze_or_silver_lightweight
+  load_mode: full
+  refresh_frequency: full_snapshot_since_start_date
+  grain: one row per open transfer request line
+  primary_keys:
+    - doc_entry
+    - line_num
+
+source:
+  application: sap-business-one
+  database: SBO_CONTOSO_PRD
+  engine: hana
+  access_method: odbc
+
+schema:
+  fields:
+    - {name: doc_entry, type: integer, nullable: false, description: Chave interna do pedido de transferencia., source: OWTQ.DocEntry}
+    - {name: line_num, type: integer, nullable: false, description: Linha do pedido., source: WTQ1.LineNum}
+    - {name: doc_num, type: integer, nullable: false, description: Numero do pedido., source: OWTQ.DocNum}
+    - {name: branch_name, type: string, nullable: true, description: Filial que originou o pedido., source: OWTQ.BPLName}
+    - {name: doc_status, type: string, nullable: true, description: "Status do pedido (open/closed).", source: derived_from_OWTQ.DocStatus}
+    - {name: created_date, type: date, nullable: false, description: Data de criacao do pedido., source: OWTQ.CreateDate}
+    - {name: item_code, type: string, nullable: true, description: Codigo do item., source: WTQ1.ItemCode}
+    - {name: quantity, type: decimal, nullable: true, description: Quantidade da linha., source: WTQ1.Quantity}
+    - {name: open_quantity, type: decimal, nullable: true, description: Quantidade em aberto., source: WTQ1.OpenQty}
+    - {name: unit_price, type: decimal, nullable: true, unit: currency_brl, description: Preco unitario., source: WTQ1.Price}
+    - {name: from_warehouse, type: string, nullable: true, description: Deposito de origem., source: WTQ1.FromWhsCod}
+    - {name: to_warehouse, type: string, nullable: true, description: Deposito de destino., source: WTQ1.WhsCode}
+    - {name: first_transfer_doc_num, type: integer, nullable: true, description: Numero da primeira transferencia vinculada., source: OWTR.DocNum}
+    - {name: first_transfer_date, type: date, nullable: true, description: Data da primeira transferencia vinculada., source: OWTR.CreateDate}
+    - {name: transfer_count, type: integer, nullable: false, description: Quantidade de transferencias vinculadas a linha., source: calculated}
+    - {name: lead_time_days, type: integer, nullable: true, unit: days, description: Dias entre o pedido e a primeira transferencia., source: calculated}
+
+quality_rules:
+  - name: doc_entry_and_line_num_should_be_unique
+    description: A combinacao doc_entry e line_num deve ser unica.
+    severity: critical
+
+  - name: lead_time_should_be_non_negative
+    description: lead_time_days deve ser maior ou igual a zero quando preenchido.
+    severity: warning
+
+known_limitations:
+  - Apenas linhas abertas (LineStatus = 'O') de pedidos nao cancelados.
+  - O vinculo com a transferencia exige WTR1.BaseType = 1250000001.
+
+open_questions:
+  - Devolucoes devem considerar apenas transferencias para depositos de retorno ou todas?

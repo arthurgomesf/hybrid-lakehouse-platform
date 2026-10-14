@@ -1,0 +1,23 @@
+{
+  "properties": {
+    "activities": [
+      {
+        "type": "TridentNotebook",
+        "name": "nb_bronze_sap",
+        "dependsOn": [],
+        "policy": { "timeout": "0.01:00:00", "retry": 1, "retryIntervalInSeconds": 60 },
+        "typeProperties": { "notebookId": "<nb_bronze_sap-id>", "workspaceId": "<workspace-id>" }
+      },
+      {
+        "type": "TridentNotebook",
+        "name": "nb_silver_finance",
+        "description": "So roda se o Bronze terminou com sucesso.",
+        "dependsOn": [
+          { "activity": "nb_bronze_sap", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.01:00:00", "retry": 1, "retryIntervalInSeconds": 60 },
+        "typeProperties": { "notebookId": "<nb_silver_finance-id>", "workspaceId": "<workspace-id>" }
+      }
+    ]
+  }
+}

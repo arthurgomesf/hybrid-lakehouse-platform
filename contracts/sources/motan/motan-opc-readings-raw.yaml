@@ -1,0 +1,184 @@
+contract:
+  name: motan-opc-readings-raw
+  type: source
+  domain: manufacturing
+  owner: manufatura
+  technical_owner: data-engineering
+  source_system: motan-doser-opcua
+  description: Leituras brutas coletadas do gravimetrico Motan DOSER-01 via OPC UA e persistidas no TimescaleDB on-premise.
+  status: draft
+  version: 0.1.0
+
+dataset:
+  name: opc_readings
+  layer: source-operational-store
+  storage_location: timescaledb-on-premise
+  physical_table: public.opc_readings
+  related_tables:
+    - public.machines
+    - public.opc_tags
+  fabric_replication: not_full_raw_by_default
+  refresh_frequency: subscription-based
+  grain: one row per OPC UA tag value change per equipment timestamp
+  primary_keys:
+    - time
+    - tag_id
+
+source:
+  equipment_name: DOSER-01
+  equipment_type: gravimetric-doser
+  opcua_node_id_pattern: ns=2;s=/Stations/DOSER-01/Doser/DOSER-01.Doser.{tag}
+  collection_mechanism: opcua_subscription_datachange
+  application: data-collector
+  database: motan_datalake
+
+schema:
+  fields:
+    - name: time
+      type: timestamptz
+      nullable: false
+      description: Timestamp principal da leitura usado como chave temporal.
+      source: server_timestamp_or_source_timestamp_or_collector_utc_fallback
+
+    - name: tag_id
+      type: integer
+      nullable: false
+      description: Identificador tecnico da tag cadastrada em public.opc_tags.
+      source: public.opc_tags.id
+
+    - name: value
+      type: jsonb
+      nullable: true
+      description: Valor bruto recebido da tag OPC UA, normalizado para JSONB.
+      source: opcua_monitored_value
+
+    - name: quality
+      type: string
+      nullable: false
+      description: Status de qualidade retornado pelo OPC UA, como Good ou outro StatusCode.
+      source: opcua_status_code
+
+    - name: source_timestamp
+      type: timestamptz
+      nullable: true
+      description: Timestamp de origem retornado pelo servidor OPC UA.
+      source: opcua_source_timestamp
+
+    - name: server_timestamp
+      type: timestamptz
+      nullable: true
+      description: Timestamp do servidor OPC UA retornado na notificacao.
+      source: opcua_server_timestamp
+
+    - name: collector_timestamp
+      type: timestamptz
+      nullable: false
+      description: Timestamp UTC do coletor no momento de enfileirar/persistir a leitura.
+      source: data_collector_application
+
+tag_metadata:
+  table: public.opc_tags
+  fields:
+    - name: tag
+      type: string
+      nullable: false
+      description: Nome tecnico da tag OPC UA.
+    - name: node_id
+      type: string
+      nullable: false
+      description: NodeId completo da tag no OPC UA.
+    - name: datatype
+      type: string
+      nullable: false
+      description: Tipo esperado conforme catalogo da aplicacao.
+    - name: unit
+      type: string
+      nullable: true
+      description: Unidade de medida quando conhecida.
+    - name: enabled
+      type: boolean
+      nullable: false
+      description: Indica se a tag esta habilitada para coleta.
+
+known_tags:
+  - tag: acWeight
+    datatype: float
+    unit: g
+    description: Peso instantaneo na celula de pesagem.
+  - tag: acTotalWeight
+    datatype: float
+    unit: kg
+    description: Consumo total acumulado do dosador.
+  - tag: acBatchCounter
+    datatype: integer
+    unit: batch
+    description: Contador acumulado de batches/ciclos.
+  - tag: svOrderNumber
+    datatype: string
+    unit: null
+    description: Numero da ordem de producao gravada/lida no dosador.
+  - tag: acComp1TotalWeight_to_acComp6TotalWeight
+    datatype: float
+    unit: kg
+    description: Consumo acumulado por componente 1 a 6.
+  - tag: acComp1DosRate_to_acComp6DosRate
+    datatype: float
+    unit: g_sec
+    description: Taxa instantanea de dosagem por componente 1 a 6.
+  - tag: acComp1Percent_to_acComp6Percent
+    datatype: float
+    unit: percent
+    description: Percentual real/atual por componente 1 a 6.
+  - tag: svComp1Percent_to_svComp6Percent
+    datatype: float
+    unit: percent
+    description: Percentual configurado da receita por componente 1 a 6.
+  - tag: svComp1MatType_to_svComp6MatType
+    datatype: integer
+    unit: null
+    description: Tipo de material configurado por componente; significado operacional deve ser validado.
+  - tag: acOnOffState
+    datatype: integer
+    unit: null
+    description: Estado operacional do equipamento conforme catalogo atual.
+  - tag: acStatuswort
+    datatype: integer
+    unit: null
+    description: Palavra geral de status. SEMANTICA NAO IDENTIFICADA completamente.
+  - tag: acAlarmwort
+    datatype: integer
+    unit: null
+    description: Palavra geral de alarme. SEMANTICA NAO IDENTIFICADA completamente.
+
+quality_rules:
+  - name: required_primary_key
+    description: time e tag_id devem estar preenchidos.
+    severity: critical
+  - name: known_tag
+    description: tag_id deve existir em public.opc_tags.
+    severity: critical
+  - name: quality_should_be_good_for_analytics
+    description: Leituras com quality diferente de Good devem ser identificadas antes do consumo analitico.
+    severity: warning
+  - name: timestamp_should_be_present
+    description: Pelo menos server_timestamp, source_timestamp ou fallback UTC do coletor deve existir para formar time.
+    severity: critical
+  - name: value_type_should_match_tag_catalog
+    description: O tipo real de value deve ser compativel com datatype cadastrado para a tag.
+    severity: warning
+
+known_limitations:
+  - O raw completo de alta frequencia nao deve ser replicado integralmente para o Fabric por padrao devido a restricoes de capacity.
+  - value e armazenado como JSONB, sem constraint fisica por tipo de tag.
+  - Duplicidades por time e tag_id sao descartadas no insert atual.
+  - Falhas de escrita em batch sao logadas, mas nao foi identificado retry persistente.
+  - Eventos fora de ordem sao possiveis por depender de timestamps OPC UA.
+  - Gaps temporais podem ocorrer durante queda de comunicacao OPC UA.
+
+open_questions:
+  - Qual e o valor efetivo de poll_interval em producao?
+  - Qual timestamp deve ser oficial para consumo analitico no Fabric?
+  - Qual politica de retencao deve ser aplicada ao raw no TimescaleDB?
+  - Quais tags devem ser promovidas para datasets analiticos no Fabric?
+  - Qual e a regra oficial para tratar quality diferente de Good?
+  - Qual e a semantica completa de acStatuswort e acAlarmwort?

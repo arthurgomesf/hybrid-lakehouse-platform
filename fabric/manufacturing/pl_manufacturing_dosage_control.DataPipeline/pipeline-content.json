@@ -1,0 +1,31 @@
+{
+  "properties": {
+    "activities": [
+      {
+        "type": "TridentNotebook",
+        "name": "nb_bronze_motan",
+        "dependsOn": [],
+        "policy": { "timeout": "0.01:00:00", "retry": 1, "retryIntervalInSeconds": 60 },
+        "typeProperties": { "notebookId": "<nb_bronze_motan-id>", "workspaceId": "<workspace-id>" }
+      },
+      {
+        "type": "TridentNotebook",
+        "name": "nb_silver_manufacturing",
+        "dependsOn": [
+          { "activity": "nb_bronze_motan", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.01:00:00", "retry": 1, "retryIntervalInSeconds": 60 },
+        "typeProperties": { "notebookId": "<nb_silver_manufacturing-id>", "workspaceId": "<workspace-id>" }
+      },
+      {
+        "type": "TridentNotebook",
+        "name": "nb_gold_manufacturing_dosage_control",
+        "dependsOn": [
+          { "activity": "nb_silver_manufacturing", "dependencyConditions": ["Succeeded"] }
+        ],
+        "policy": { "timeout": "0.01:00:00", "retry": 1, "retryIntervalInSeconds": 60 },
+        "typeProperties": { "notebookId": "<nb_gold_manufacturing_dosage_control-id>", "workspaceId": "<workspace-id>" }
+      }
+    ]
+  }
+}

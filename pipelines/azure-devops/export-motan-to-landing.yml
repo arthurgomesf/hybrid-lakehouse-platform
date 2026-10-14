@@ -1,0 +1,61 @@
+trigger: none
+
+schedules:
+  - cron: "*/15 * * * *"
+    displayName: Export Motan every 15 minutes
+    branches:
+      include:
+        - main
+    always: true
+
+pool:
+  name: motan-linux-agents
+
+variables:
+  WINDOW_DAYS: "7"
+  OUTPUT_DIR: "$(Agent.TempDirectory)/source-to-landing"
+
+steps:
+  - checkout: self
+    clean: true
+
+  # Data da particao definida uma vez por execucao (retries reusam o mesmo caminho).
+  - script: echo "##vso[task.setvariable variable=INGESTION_DATE]$(date -u +%F)"
+    displayName: Set ingestion date
+
+  - script: |
+      mkdir -p "$(OUTPUT_DIR)"
+      python3 -m pip install --upgrade pip
+      python3 -m pip install -r pipelines/exporters/requirements.txt
+      if ! command -v azcopy >/dev/null 2>&1; then
+        curl -fsSL -o /tmp/azcopy.tar.gz https://aka.ms/downloadazcopy-v10-linux
+        tar -xzf /tmp/azcopy.tar.gz -C /tmp
+        mkdir -p "$HOME/.local/bin"
+        cp /tmp/azcopy_linux_amd64_*/azcopy "$HOME/.local/bin/azcopy"
+        chmod +x "$HOME/.local/bin/azcopy"
+        export PATH="$HOME/.local/bin:$PATH"
+      fi
+      azcopy --version
+    displayName: Install exporter dependencies
+
+  - script: |
+      python3 pipelines/exporters/source_to_landing.py \
+        --config pipelines/sources/motan/datasets.yaml \
+        --run-id "$(Build.BuildId)"         --ingestion-date "$(INGESTION_DATE)" \
+        --window-days "$(WINDOW_DAYS)" \
+        --output-dir "$(OUTPUT_DIR)" \
+        --upload
+    displayName: Export Motan datasets to landing
+    env:
+      PATH: /home/azp/.local/bin:$(PATH)
+      DATABASE_URL: $(MOTAN_DATABASE_URL)
+      AZURE_STORAGE_LANDING_URL: $(AZURE_STORAGE_LANDING_URL)
+      AZCOPY_AUTO_LOGIN_TYPE: SPN
+      AZCOPY_SPA_APPLICATION_ID: $(AZURE_CLIENT_ID)
+      AZCOPY_SPA_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
+      AZCOPY_TENANT_ID: $(AZURE_TENANT_ID)
+
+  - publish: $(OUTPUT_DIR)
+    artifact: source-to-landing-output
+    condition: always()
+    displayName: Publish local export output

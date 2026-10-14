@@ -1,0 +1,14 @@
+services:
+  azdo-agent:
+    build:
+      context: .
+    image: azdo-agent-motan:latest
+    container_name: azdo-agent-motan-01
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 1g
+    environment:
+      AZP_URL: ${AZP_URL}
+      AZP_TOKEN: ${AZP_TOKEN}
+      AZP_POOL: ${AZP_POOL}
+      AZP_AGENT_NAME: ${AZP_AGENT_NAME}

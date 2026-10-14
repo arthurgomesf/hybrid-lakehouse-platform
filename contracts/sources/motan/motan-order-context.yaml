@@ -1,0 +1,108 @@
+contract:
+  name: motan-order-context
+  type: source-derived
+  domain: manufacturing
+  owner: manufatura
+  technical_owner: data-engineering
+  source_system: motan-doser-opcua
+  description: Contexto temporal da ordem de producao ativa no gravimetrico Motan DOSER-01, derivado da tag svOrderNumber.
+  status: draft
+  version: 0.1.0
+
+dataset:
+  name: motan_order_context
+  layer: source-derived-operational-store
+  storage_location: timescaledb-on-premise
+  physical_view: public.vw_order_number_changes
+  source_table: public.opc_readings
+  source_tag: svOrderNumber
+  fabric_replication: candidate_for_bronze_or_silver_lightweight
+  refresh_frequency: incremental
+  grain: one row per detected production order window per equipment
+  primary_keys:
+    - machine
+    - order_number
+    - started_at
+
+source:
+  equipment_name: DOSER-01
+  equipment_type: gravimetric-doser
+  opcua_node_id: ns=2;s=/Stations/DOSER-01/Doser/DOSER-01.Doser.svOrderNumber
+  derivation_rule: changes in svOrderNumber define production order windows
+  application: data-collector
+  database: motan_datalake
+
+schema:
+  fields:
+    - name: machine
+      type: string
+      nullable: true
+      description: Nome do equipamento Motan associado a janela da OP.
+      source: public.machines.name
+
+    - name: order_number
+      type: string
+      nullable: true
+      description: Numero da ordem de producao lida no gravimetrico pela tag svOrderNumber.
+      source: opcua_tag_svOrderNumber
+
+    - name: started_at
+      type: timestamptz
+      nullable: true
+      description: Timestamp em que a OP passou a ser observada no gravimetrico.
+      source: public.opc_readings.time
+
+    - name: next_order_started_at
+      type: timestamptz
+      nullable: true
+      description: Timestamp em que a proxima OP passou a ser observada no gravimetrico; usado como fim da janela atual.
+      source: next_detected_svOrderNumber_change
+
+    - name: duration_minutes
+      type: numeric
+      nullable: true
+      description: Duracao aproximada da janela da OP em minutos.
+      source: calculated_from_started_at_and_next_order_started_at
+
+semantics:
+  order_window_start: started_at
+  order_window_end: next_order_started_at
+  open_order_window: next_order_started_at is null
+  order_source_tag: svOrderNumber
+  business_meaning: OP ativa no gravimetrico durante uma janela temporal.
+
+quality_rules:
+  - name: order_number_should_not_be_empty
+    description: order_number nao deve ser nulo ou vazio para janelas usadas em analises de producao.
+    severity: warning
+
+  - name: started_at_required_for_valid_window
+    description: started_at deve estar preenchido para qualquer janela valida de OP.
+    severity: critical
+
+  - name: window_end_after_start
+    description: next_order_started_at deve ser maior que started_at quando estiver preenchido.
+    severity: critical
+
+  - name: one_open_window_per_machine
+    description: Deve existir no maximo uma janela aberta por equipamento.
+    severity: warning
+
+  - name: order_window_should_have_good_quality_reading
+    description: A leitura de svOrderNumber usada para detectar a janela deve ter quality Good para consumo analitico confiavel.
+    severity: warning
+
+known_limitations:
+  - A janela depende da OP escrita/lida no gravimetrico; se a OP estiver incorreta no Motan, a correlacao tambem ficara incorreta.
+  - Trocas manuais ou correcoes rapidas de OP podem criar janelas curtas ou inconsistentes.
+  - A view representa a visao derivada atual; a regra deve ser validada antes de virar contrato definitivo de produto.
+  - order_number e nullable na view fisica, embora analiticamente seja esperado para janelas de producao validas.
+  - O fim da janela e inferido pelo inicio da proxima OP, nao por um evento explicito de encerramento.
+
+open_questions:
+  - A tag svOrderNumber e sempre a fonte oficial da OP ativa no gravimetrico?
+  - Existe duracao minima para considerar uma janela de OP valida?
+  - Como tratar janelas criadas por OP digitada incorretamente e corrigida em seguida?
+  - Como reconciliar divergencias entre OP do INJET e OP gravada no Motan?
+  - A janela aberta deve ser enviada ao Fabric como dado em andamento?
+  - Qual atraso maximo aceitavel entre mudanca de OP no INJET e escrita/leitura no Motan?

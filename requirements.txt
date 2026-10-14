@@ -1,0 +1,9 @@
+# Execucao local (demo, testes, medallion sem Spark)
+polars>=1.30,<2
+pyarrow>=21
+tzdata  # fusos horarios no Windows (zoneinfo)
+PyYAML>=6.0
+duckdb>=1.1
+deltalake>=0.22
+pytest>=8
+ruff>=0.6

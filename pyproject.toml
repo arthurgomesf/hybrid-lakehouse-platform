@@ -1,0 +1,18 @@
+[project]
+name = "data-platform-portfolio"
+version = "0.1.0"
+description = "Plataforma de dados hibrida (on-prem -> landing -> lakehouse medallion) com dados ficticios, executavel localmente."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py310"
+extend-exclude = ["fabric"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]

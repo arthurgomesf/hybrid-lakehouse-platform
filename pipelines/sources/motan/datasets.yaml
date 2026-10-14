@@ -1,0 +1,63 @@
+source:
+  name: motan
+  domain: manufacturing
+  engine: postgresql
+  description: Extracoes do data-collector (dosador gravimetrico Motan + cache SAP de ordens de producao) para a landing.
+
+defaults:
+  window_days: 7
+  file_format: parquet
+  timezone: UTC
+
+# Todos os datasets usam janela movel (window_days) + MERGE por chave no Bronze.
+# contract_schema indica onde ficam os campos no contrato quando nao e
+# `schema` (ex.: contratos com mais de uma tabela ou contratos de Data Product).
+
+datasets:
+  - name: order_context
+    landing_dataset: order_context
+    contract: contracts/sources/motan/motan-order-context.yaml
+    source_sql: sql/order_context.sql
+    load_mode: incremental
+    upsert_keys: [machine, order_number, started_at]
+    bronze_table: bronze_motan_order_context
+    silver_table: silver_manufacturing_order_windows
+
+  - name: actual_consumption_by_order
+    landing_dataset: actual_consumption_by_order
+    contract: contracts/sources/motan/motan-actual-consumption-by-order.yaml
+    source_sql: sql/actual_consumption_by_order.sql
+    load_mode: incremental
+    upsert_keys: [machine, order_number, started_at]
+    bronze_table: bronze_motan_actual_consumption_by_order
+    silver_table: silver_manufacturing_order_consumption
+
+  - name: sap_production_orders
+    landing_dataset: sap_production_orders
+    contract: contracts/sources/sap/sap-production-orders.yaml
+    contract_schema: orders_schema
+    source_sql: sql/sap_production_orders.sql
+    load_mode: incremental
+    upsert_keys: [order_number]
+    bronze_table: bronze_sap_production_orders
+    silver_table: silver_manufacturing_production_orders
+
+  - name: sap_production_order_components
+    landing_dataset: sap_production_order_components
+    contract: contracts/sources/sap/sap-production-orders.yaml
+    contract_schema: components_schema
+    source_sql: sql/sap_production_order_components.sql
+    load_mode: incremental
+    upsert_keys: [order_number, line_number]
+    bronze_table: bronze_sap_production_order_components
+
+  # Saida da view on-premise que hoje ja calcula o comparativo. Fica no Bronze
+  # apenas como referencia para o teste de paridade com o Gold calculado no lakehouse.
+  - name: order_plan_vs_actual_reference
+    landing_dataset: order_plan_vs_actual_reference
+    contract: contracts/data-products/manufacturing/manufacturing-dosage-control.yaml
+    contract_schema: output_schema
+    source_sql: sql/order_plan_vs_actual_reference.sql
+    load_mode: incremental
+    upsert_keys: [machine, order_number]
+    bronze_table: bronze_motan_order_plan_vs_actual_reference

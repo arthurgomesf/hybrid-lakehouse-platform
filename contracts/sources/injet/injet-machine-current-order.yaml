@@ -1,0 +1,148 @@
+contract:
+  name: injet-machine-current-order
+  type: source
+  domain: manufacturing
+  owner: manufatura
+  technical_owner: data-engineering
+  source_system: injet-sqlserver
+  description: OP corrente associada a uma maquina no INJET, usada como referencia para sincronizar a ordem de producao no gravimetrico Motan.
+  status: draft
+  version: 0.1.0
+
+dataset:
+  name: injet_machine_current_order
+  layer: source-operational-system
+  storage_location: sqlserver-on-premise
+  physical_object: dbo.viewOPsEmMaquina
+  fabric_replication: candidate_for_bronze_or_silver_lightweight
+  refresh_frequency: periodic_polling
+  grain: one row per configured machine current production order lookup
+  primary_keys:
+    - machine_code
+
+source:
+  application: data-collector-op-sync
+  database_type: sqlserver
+  view_schema: dbo
+  view_name: viewOPsEmMaquina
+  machine_column: cdMaquina
+  order_column: nrOP
+  target_motan_tag: svOrderNumber
+  target_motan_node_id: ns=2;s=/Stations/DOSER-01/Doser/DOSER-01.Doser.svOrderNumber
+
+schema:
+  fields:
+    - name: machine_code
+      type: string
+      nullable: false
+      description: Codigo da maquina no INJET usado para localizar a OP corrente.
+      source: cdMaquina
+
+    - name: order_number
+      type: string
+      nullable: true
+      description: Numero da ordem de producao corrente associada a maquina no INJET.
+      source: nrOP
+
+    - name: raw_row
+      type: object
+      nullable: true
+      description: Linha completa retornada pela view do INJET, preservada em eventos de sincronizacao quando disponivel.
+      source: dbo.viewOPsEmMaquina
+
+operational_events:
+  table: public.op_sync_events
+  description: Eventos gerados pelo processo que compara a OP do INJET com a OP gravada no Motan.
+  fields:
+    - name: injet_machine_code
+      type: string
+      nullable: true
+      description: Codigo da maquina consultada no INJET.
+
+    - name: source_order_number
+      type: string
+      nullable: true
+      description: OP lida no INJET.
+
+    - name: motan_order_number
+      type: string
+      nullable: true
+      description: OP lida no Motan antes de eventual escrita.
+
+    - name: written_order_number
+      type: string
+      nullable: true
+      description: OP escrita no Motan quando a sincronizacao executa escrita.
+
+    - name: target_node_id
+      type: string
+      nullable: false
+      description: NodeId OPC UA alvo no Motan.
+
+    - name: action
+      type: string
+      nullable: false
+      description: Acao executada ou planejada pelo sincronizador.
+
+    - name: status
+      type: string
+      nullable: false
+      description: Status do evento de sincronizacao.
+
+    - name: dry_run
+      type: boolean
+      nullable: false
+      description: Indica se a execucao estava em modo simulacao.
+
+    - name: error_message
+      type: string
+      nullable: true
+      description: Mensagem de erro quando houver falha.
+
+    - name: details
+      type: jsonb
+      nullable: true
+      description: Detalhes adicionais do evento, incluindo raw_row do INJET quando disponivel.
+
+    - name: event_time
+      type: timestamptz
+      nullable: false
+      description: Timestamp UTC do evento de sincronizacao.
+
+semantics:
+  business_meaning: OP que o sistema INJET entende como corrente para a maquina configurada.
+  synchronization_role: Fonte usada para manter a tag svOrderNumber do Motan alinhada com a OP corrente.
+  correlation_key: order_number
+  equipment_mapping_required: true
+
+quality_rules:
+  - name: machine_code_should_be_configured
+    description: machine_code deve estar configurado para consultar a maquina correta no INJET.
+    severity: critical
+
+  - name: order_number_should_be_present_when_machine_is_running
+    description: order_number deve estar preenchido quando houver producao ativa na maquina.
+    severity: warning
+
+  - name: order_number_should_match_motan_after_sync
+    description: source_order_number do INJET deve coincidir com svOrderNumber no Motan apos sincronizacao bem sucedida.
+    severity: warning
+
+  - name: sync_errors_should_be_monitored
+    description: Eventos com status de erro ou OPC_UNAVAILABLE devem ser monitorados.
+    severity: warning
+
+known_limitations:
+  - O contrato depende da disponibilidade do SQL Server INJET e da view viewOPsEmMaquina.
+  - A semantica completa das demais colunas retornadas pela view nao foi documentada nesta etapa.
+  - Divergencias entre INJET e Motan podem ocorrer se o OPC UA estiver indisponivel ou se a escrita estiver em dry-run.
+  - O mapeamento entre codigo da maquina no INJET e equipamento DOSER-01 precisa permanecer governado.
+  - Eventos op_sync_events sao trilha operacional, nao substituem a fonte transacional INJET.
+
+open_questions:
+  - Qual e o codigo oficial da maquina no INJET que corresponde ao DOSER-01?
+  - Quais outras colunas da viewOPsEmMaquina devem ser promovidas para analise no Fabric?
+  - A OP corrente oficial para analytics deve vir do INJET, do Motan ou da reconciliacao entre ambos?
+  - Qual atraso maximo aceitavel entre troca de OP no INJET e atualizacao da tag svOrderNumber no Motan?
+  - Como tratar quando INJET informa uma OP e Motan permanece com outra?
+  - O modo dry_run deve ser permitido em producao?

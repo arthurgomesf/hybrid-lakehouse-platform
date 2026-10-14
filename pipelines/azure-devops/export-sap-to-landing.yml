@@ -1,0 +1,79 @@
+trigger: none
+
+schedules:
+  - cron: "0 * * * *"
+    displayName: Export SAP sources every hour
+    branches:
+      include:
+        - main
+    # always: true enfileira mesmo sem mudanca no codigo; com agente instavel isso
+    # acumula execucoes na fila. Use so com agente em maquina sempre ligada.
+    always: true
+
+pool:
+  name: sap-windows-agents
+
+variables:
+  - name: WINDOW_DAYS
+    value: "7"
+  - name: OUTPUT_DIR
+    value: "$(Agent.TempDirectory)\\source-to-landing"
+
+steps:
+  - checkout: self
+    clean: true
+
+  # Data da particao definida UMA vez por execucao: os retries do passo de export
+  # regravam o mesmo caminho, mesmo que cruzem a meia-noite UTC.
+  - powershell: |
+      $date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
+      Write-Host "##vso[task.setvariable variable=INGESTION_DATE]$date"
+    displayName: Set ingestion date
+
+  - powershell: |
+      python --version
+      python -m pip install --upgrade pip
+      python -m pip install -r pipelines/exporters/requirements.txt
+    displayName: Install exporter dependencies
+
+  - powershell: |
+      $azcopyLocal = "$env:LOCALAPPDATA\azcopy\azcopy.exe"
+      if (-not (Test-Path $azcopyLocal)) {
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/Azure/azure-storage-azcopy/releases/latest" -Headers @{ "User-Agent" = "azure-pipelines" }
+        $tag = $release.tag_name.TrimStart("v")
+        $url = "https://github.com/Azure/azure-storage-azcopy/releases/download/v$tag/azcopy_windows_amd64_$tag.zip"
+        $tmp = "$env:TEMP\azcopy"
+        New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+        Invoke-WebRequest -Uri $url -OutFile "$tmp\azcopy.zip" -UseBasicParsing
+        Expand-Archive -Path "$tmp\azcopy.zip" -DestinationPath $tmp -Force
+        $exe = Get-ChildItem -Path "$tmp" -Recurse -Filter "azcopy.exe" | Select-Object -First 1
+        New-Item -ItemType Directory -Force -Path "$env:LOCALAPPDATA\azcopy" | Out-Null
+        Copy-Item $exe.FullName $azcopyLocal
+      }
+      $env:PATH = "$env:LOCALAPPDATA\azcopy;$env:PATH"
+      azcopy --version
+    displayName: Install AzCopy
+
+  - powershell: |
+      $env:PATH = "$env:LOCALAPPDATA\azcopy;$env:PATH"
+      python pipelines/exporters/source_to_landing.py `
+        --config pipelines/sources/sap/datasets.yaml `
+        --run-id "$(Build.BuildId)" `
+        --ingestion-date "$(INGESTION_DATE)" `
+        --window-days "$(WINDOW_DAYS)" `
+        --output-dir "$(OUTPUT_DIR)" `
+        --upload
+    displayName: Export SAP sources to landing
+    retryCountOnTaskFailure: 3
+    env:
+      HANA_CONNECTION_STRING: $(HANA_CONNECTION_STRING)
+      AZURE_STORAGE_LANDING_URL: $(AZURE_STORAGE_LANDING_URL)
+      AZCOPY_AUTO_LOGIN_TYPE: SPN
+      AZCOPY_SPA_APPLICATION_ID: $(AZURE_CLIENT_ID)
+      AZCOPY_SPA_CLIENT_SECRET: $(AZURE_CLIENT_SECRET)
+      AZCOPY_TENANT_ID: $(AZURE_TENANT_ID)
+
+  - publish: $(OUTPUT_DIR)
+    artifact: source-to-landing-output
+    condition: always()
+    displayName: Publish local export output

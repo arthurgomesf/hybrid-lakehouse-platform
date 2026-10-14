@@ -1,0 +1,52 @@
+contract:
+  name: motan-actual-consumption-by-order
+  type: source-derived
+  domain: manufacturing
+  owner: manufatura
+  technical_owner: data-engineering
+  source_system: motan-doser-opcua
+  description: Consumo real total por janela de OP no dosador gravimetrico, calculado on-premise a partir dos deltas positivos do acumulador acTotalWeight.
+  status: draft
+  version: 0.1.0
+
+dataset:
+  name: actual_consumption_by_order
+  layer: source-derived-operational-store
+  storage_location: timescaledb-on-premise
+  physical_view: public.vw_order_actual_consumption_total
+  fabric_replication: candidate_for_bronze_or_silver_lightweight
+  load_mode: incremental
+  refresh_frequency: window_7_days
+  grain: one row per production order window per equipment
+  primary_keys:
+    - machine
+    - order_number
+    - started_at
+
+schema:
+  fields:
+    - {name: machine, type: string, nullable: false, description: Equipamento dosador., source: public.machines.name}
+    - {name: order_number, type: string, nullable: true, description: OP lida pela tag svOrderNumber., source: opcua_tag_svOrderNumber}
+    - {name: started_at, type: timestamptz, nullable: false, description: Inicio da janela da OP., source: vw_order_number_changes.started_at}
+    - {name: ended_at, type: timestamptz, nullable: true, description: Fim da janela; nulo com a OP em execucao., source: vw_order_number_changes.next_order_started_at}
+    - {name: duration_minutes, type: numeric, nullable: true, description: Duracao da janela em minutos., source: calculated}
+    - {name: actual_consumed_total_kg, type: numeric, nullable: true, unit: kg, description: Soma dos deltas positivos de acTotalWeight na janela., source: calculated}
+    - {name: actual_coverage, type: numeric, nullable: true, unit: ratio, description: Fracao da janela com leituras validas (0 a 1)., source: calculated}
+
+quality_rules:
+  - name: window_key_unique
+    description: machine, order_number e started_at devem ser unicos.
+    severity: critical
+  - name: consumption_non_negative
+    description: actual_consumed_total_kg nao pode ser negativo.
+    severity: critical
+  - name: coverage_between_0_and_1
+    description: actual_coverage deve estar entre 0 e 1.
+    severity: warning
+
+known_limitations:
+  - Resets do acumulador sao tratados como delta zero.
+  - Janelas com baixa cobertura subestimam o consumo.
+
+open_questions:
+  - Qual cobertura minima torna a janela confiavel para comparacao?

@@ -1,0 +1,14 @@
+[
+  {
+    "name": "sap",
+    "path": "/Files",
+    "target": {
+      "type": "AdlsGen2",
+      "adlsGen2": {
+        "connectionId": "<adls-connection-id>",
+        "location": "https://<storage-account>.dfs.core.windows.net",
+        "subpath": "/landing/finance/sap"
+      }
+    }
+  }
+]

@@ -1,0 +1,108 @@
+contract:
+  name: sap-purchase-invoices
+  type: source
+  domain: finance
+  owner: controladoria
+  technical_owner: data-engineering
+  source_system: sap-business-one
+  description: Cabecalhos de notas fiscais de entrada (tabela OPCH) do SAP Business One, extraidos de forma incremental pela data de atualizacao.
+  status: draft
+  version: 0.2.0
+
+dataset:
+  name: purchase_invoices
+  layer: bronze
+  storage_location: sap-hana-on-premise
+  physical_table: SBO_CONTOSO_PRD.OPCH
+  fabric_replication: candidate_for_bronze_or_silver_lightweight
+  load_mode: incremental
+  watermark: updated_date
+  refresh_frequency: hourly_window_7_days
+  grain: one row per purchase invoice header
+  primary_keys:
+    - doc_entry
+
+source:
+  application: sap-business-one
+  database: SBO_CONTOSO_PRD
+  engine: hana
+  access_method: odbc
+
+schema:
+  fields:
+    - name: doc_entry
+      type: integer
+      nullable: false
+      description: Chave interna unica do documento no SAP.
+      source: OPCH.DocEntry
+
+    - name: doc_num
+      type: integer
+      nullable: false
+      description: Numero do documento.
+      source: OPCH.DocNum
+
+    - name: posting_date
+      type: date
+      nullable: false
+      description: Data de lancamento do documento.
+      source: OPCH.DocDate
+
+    - name: updated_date
+      type: date
+      nullable: false
+      description: Data da ultima alteracao do documento; usada como watermark da extracao.
+      source: OPCH.UpdateDate
+
+    - name: vendor_code
+      type: string
+      nullable: true
+      description: Codigo do fornecedor.
+      source: OPCH.CardCode
+
+    - name: vendor_name
+      type: string
+      nullable: true
+      description: Nome do fornecedor.
+      source: OPCH.CardName
+
+    - name: document_total
+      type: decimal
+      nullable: true
+      unit: currency_brl
+      description: Total do documento na moeda local.
+      source: OPCH.DocTotal
+
+    - name: invoice_number
+      type: integer
+      nullable: true
+      description: Numero da nota fiscal (serial). SEMANTICA NAO IDENTIFICADA completamente.
+      source: OPCH.Serial
+
+    - name: is_cancelled
+      type: boolean
+      nullable: false
+      description: Documento cancelado no SAP.
+      source: OPCH.CANCELED
+
+quality_rules:
+  - name: doc_entry_should_be_unique
+    description: doc_entry deve ser unico para permitir MERGE no destino.
+    severity: critical
+
+  - name: posting_date_should_be_present
+    description: posting_date deve estar preenchido.
+    severity: critical
+
+  - name: document_total_should_be_reviewed_when_negative
+    description: document_total negativo deve ser revisado antes de consumo analitico.
+    severity: warning
+
+known_limitations:
+  - A extracao cobre apenas os campos selecionados; a tabela completa possui centenas de colunas.
+  - Alteracoes feitas antes da janela de window_days so sao recapturadas com uma carga ampliada (backfill).
+  - Exclusoes fisicas no SAP nao sao detectadas (o SAP B1 cancela em vez de excluir).
+
+open_questions:
+  - Qual e o significado oficial de OPCH.Serial?
+  - document_total deve trazer tambem valores em moeda estrangeira?

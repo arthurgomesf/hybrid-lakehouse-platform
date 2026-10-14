@@ -1,0 +1,9 @@
+# Dependencias do exportador nos agentes self-hosted (producao).
+#   - hana (SAP HANA via ODBC): pyodbc + HANA_CONNECTION_STRING
+#   - postgresql (data-collector): psycopg[binary] + DATABASE_URL
+# Versoes em faixa para compatibilidade entre Python 3.10 e 3.14.
+polars>=1.30,<2
+pyarrow>=21
+PyYAML>=6.0.3
+pyodbc>=5.3
+psycopg[binary]>=3.2

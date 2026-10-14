@@ -1,0 +1,298 @@
+contract:
+  name: manufacturing-dosage-control
+  type: data-product
+  domain: manufacturing
+  owner: manufatura
+  technical_owner: data-engineering
+  description: Data Product para comparar consumo real dosado no gravimetrico Motan com consumo planejado no SAP por ordem de producao.
+  status: draft
+  version: 0.1.0
+
+data_product:
+  name: manufacturing_dosage_control
+  business_capability: dosage_plan_vs_actual_monitoring
+  target_layer: gold
+  target_platform: microsoft-fabric
+  fabric_replication: curated_outputs_only
+  grain: one row per equipment and production order in the consolidated comparison output
+  primary_keys:
+    - machine
+    - order_number
+
+inputs:
+  - contract: motan-opc-readings-raw
+    role: source_raw_telemetry
+    source_system: motan-doser-opcua
+    required_fields:
+      - time
+      - tag_id
+      - value
+      - quality
+      - collector_timestamp
+
+  - contract: motan-order-context
+    role: production_order_time_window
+    source_system: motan-doser-opcua
+    required_fields:
+      - machine
+      - order_number
+      - started_at
+      - next_order_started_at
+
+  - contract: sap-production-orders
+    role: planned_production_and_material_consumption
+    source_system: sap-service-layer
+    required_fields:
+      - order_number
+      - status
+      - product_item_code
+      - product_description
+      - planned_quantity
+      - completed_quantity
+      - planned_resin_total_kg
+      - start_date
+      - due_date
+      - synced_at
+
+  - contract: injet-machine-current-order
+    role: machine_order_reference_and_sync_traceability
+    source_system: injet-sqlserver
+    required_fields:
+      - machine_code
+      - order_number
+
+current_physical_reference:
+  database: motan_datalake
+  source_view: public.vw_order_plan_vs_actual_consolidated
+  supporting_views:
+    - public.vw_order_number_changes
+    - public.vw_order_actual_consumption_total
+    - public.vw_order_component_consumption_consolidated
+    - public.vw_current_order_realtime_operation
+
+output_schema:
+  fields:
+    - name: machine
+      type: string
+      nullable: true
+      description: Equipamento gravimetrico associado a OP.
+      source: motan-order-context.machine
+
+    - name: order_number
+      type: string
+      nullable: true
+      description: Numero da ordem de producao usada para correlacionar Motan, SAP e INJET.
+      source: motan-order-context.order_number
+
+    - name: started_at
+      type: timestamptz
+      nullable: true
+      description: Inicio da janela da OP no gravimetrico.
+      source: motan-order-context.started_at
+
+    - name: ended_at
+      type: timestamptz
+      nullable: true
+      description: Fim da janela da OP no gravimetrico; nulo quando a OP ainda esta em execucao.
+      source: motan-order-context.next_order_started_at
+
+    - name: duration_minutes
+      type: numeric
+      nullable: true
+      description: Duracao da janela consolidada da OP em minutos.
+      source: calculated
+
+    - name: sap_status
+      type: string
+      nullable: true
+      description: Status tecnico da OP no SAP.
+      source: sap-production-orders.status
+
+    - name: sap_status_description
+      type: string
+      nullable: true
+      description: Descricao amigavel do status SAP.
+      source: calculated_from_sap_status
+
+    - name: sap_released_for_production
+      type: boolean
+      nullable: true
+      description: Indica se a OP esta liberada para producao no SAP.
+      source: calculated_from_sap_status
+
+    - name: product_item_code
+      type: string
+      nullable: true
+      description: Codigo do produto produzido pela OP.
+      source: sap-production-orders.product_item_code
+
+    - name: product_description
+      type: string
+      nullable: true
+      description: Descricao do produto produzido pela OP.
+      source: sap-production-orders.product_description
+
+    - name: sap_planned_production_quantity
+      type: numeric
+      nullable: true
+      description: Quantidade planejada de producao no SAP.
+      source: sap-production-orders.planned_quantity
+
+    - name: sap_completed_production_quantity
+      type: numeric
+      nullable: true
+      description: Quantidade concluida registrada no SAP.
+      source: sap-production-orders.completed_quantity
+
+    - name: sap_start_date
+      type: date
+      nullable: true
+      description: Data inicial planejada da OP no SAP.
+      source: sap-production-orders.start_date
+
+    - name: sap_due_date
+      type: date
+      nullable: true
+      description: Data final planejada ou prevista da OP no SAP.
+      source: sap-production-orders.due_date
+
+    - name: sap_date_match_status
+      type: string
+      nullable: true
+      description: Status de compatibilidade entre a janela observada no Motan e as datas da OP no SAP.
+      source: calculated
+
+    - name: planned_resin_total_kg
+      type: numeric
+      nullable: true
+      unit: kg
+      description: Consumo planejado total de resina/material relevante conforme regra SAP atual.
+      source: sap-production-orders.planned_resin_total_kg
+
+    - name: actual_consumed_total_kg
+      type: numeric
+      nullable: true
+      unit: kg
+      description: Consumo real calculado pelos deltas positivos do acumulador total do Motan durante a janela da OP.
+      source: motan-acTotalWeight-derived
+
+    - name: variance_kg
+      type: numeric
+      nullable: true
+      unit: kg
+      description: Diferenca entre consumo real dosado e consumo planejado no SAP.
+      source: actual_consumed_total_kg_minus_planned_resin_total_kg
+
+    - name: variance_percent
+      type: numeric
+      nullable: true
+      unit: percent
+      description: Diferenca percentual entre consumo real e planejado.
+      source: calculated
+
+    - name: comparison_status
+      type: string
+      nullable: true
+      description: Status da comparacao entre planejado SAP e realizado Motan.
+      source: calculated
+
+    - name: windows_count
+      type: integer
+      nullable: true
+      description: Quantidade de janelas Motan consolidadas para a mesma OP.
+      source: calculated
+
+    - name: windows_without_consumption
+      type: integer
+      nullable: true
+      description: Quantidade de janelas sem consumo calculado para a OP.
+      source: calculated
+
+    - name: resin_filter_applied
+      type: string
+      nullable: true
+      description: Regra aplicada para calcular o planejado de resina/material no SAP.
+      source: sap-production-orders.resin_filter_applied
+
+    - name: sap_synced_at
+      type: timestamptz
+      nullable: true
+      description: Timestamp da ultima sincronizacao da OP SAP usada na comparacao.
+      source: sap-production-orders.synced_at
+
+business_rules:
+  production_order_correlation:
+    description: A OP e a chave logica de correlacao entre Motan, SAP e INJET.
+    key: order_number
+
+  motan_order_window:
+    description: A janela da OP no Motan e definida pela tag svOrderNumber.
+    start: primeiro timestamp em que a OP e observada
+    end: timestamp de inicio da proxima OP
+
+  actual_consumption_total:
+    description: Consumo real total calculado pelo acumulador acTotalWeight.
+    rule: somar apenas deltas positivos dentro da janela da OP
+    reset_handling: deltas negativos sao tratados como zero
+
+  planned_consumption_total:
+    description: Consumo planejado vem dos componentes SAP incluidos na regra de resina/material.
+    source: sap_production_order_components.included_in_resin_total
+
+  sap_date_compatibility:
+    description: OPs observadas no Motan fora da janela de datas SAP devem ser sinalizadas.
+    current_tolerance_days: 14
+
+  dosage_status:
+    description: Classificacao da variacao percentual entre consumo real e planejado.
+    variance_tolerance_percent: 5
+    statuses: [NO_ACTUAL_CONSUMPTION, NO_PLAN, WITHIN_TOLERANCE, OVER_CONSUMPTION, UNDER_CONSUMPTION]
+
+  aggregated_variance_percent:
+    description: Variacao percentual agregada e sempre ponderada pelo planejado (soma das variacoes / soma do planejado), nunca a media simples dos percentuais.
+
+quality_rules:
+  - name: order_number_required
+    description: order_number deve estar preenchido para que a comparacao seja valida.
+    severity: critical
+
+  - name: sap_plan_should_exist
+    description: Toda OP observada no Motan deveria possuir plano SAP sincronizado para comparacao completa.
+    severity: warning
+
+  - name: actual_consumption_should_exist
+    description: OPs fechadas deveriam possuir consumo real calculado.
+    severity: warning
+
+  - name: planned_consumption_should_exist
+    description: OPs com plano SAP deveriam possuir planned_resin_total_kg quando aplicavel.
+    severity: warning
+
+  - name: variance_percent_should_be_reviewed_when_extreme
+    description: Variacoes percentuais extremas devem ser revisadas com manufatura antes de conclusoes operacionais.
+    severity: warning
+
+  - name: sap_date_mismatch_should_be_flagged
+    description: OP fora da data SAP deve ser sinalizada no status da comparacao.
+    severity: warning
+
+  - name: source_freshness_should_be_monitored
+    description: Sincronizacao SAP, OP INJET/Motan e leituras Motan devem estar dentro das janelas esperadas de atualizacao.
+    severity: warning
+
+known_limitations:
+  - Este Data Product depende da qualidade da OP gravada no Motan pela tag svOrderNumber.
+  - Divergencias entre INJET e Motan podem afetar a janela de correlacao.
+  - O consumo real depende de acumuladores Motan e da regra de deltas positivos.
+  - O planejado SAP depende da regra atual de selecao de componentes de resina/material.
+  - O output final no Fabric deve ser curado e incremental, evitando replicar raw OPC UA completo.
+  - Status e tolerancias ainda precisam ser validados com manufatura.
+
+open_questions:
+  - A OP oficial para comparacao deve ser a OP do Motan, a OP do INJET ou uma reconciliacao entre ambas?
+  - A tolerancia de 14 dias para data SAP e correta para todos os cenarios?
+  - Qual limite de variance_percent deve gerar alerta operacional?
+  - planned_resin_total_kg representa exatamente o mesmo conceito de actual_consumed_total_kg?
+  - Como tratar OPs com multiplas janelas no Motan?
+  - Como tratar OPs sem plano SAP sincronizado?
+  - Este Data Product deve publicar apenas historico fechado ou tambem OP em execucao?

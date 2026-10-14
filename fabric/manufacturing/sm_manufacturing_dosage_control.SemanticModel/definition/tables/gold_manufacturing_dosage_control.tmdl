@@ -1,0 +1,198 @@
+table gold_manufacturing_dosage_control
+	sourceLineageTag: [dbo].[gold_manufacturing_dosage_control]
+
+	measure 'Total Planned Resin Kg' =
+			
+			SUM(gold_manufacturing_dosage_control[planned_resin_total_kg])
+		formatString: 0
+
+		changedProperty = Name
+
+	measure 'Orders Count' =
+			
+			DISTINCTCOUNT(gold_manufacturing_dosage_control[order_number])
+		formatString: 0
+
+		changedProperty = Name
+
+	measure 'Total Actual Consumed Kg' =
+			
+			SUM(gold_manufacturing_dosage_control[actual_consumed_total_kg])
+
+		changedProperty = Name
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Total Variance Kg' =
+			
+			SUM(gold_manufacturing_dosage_control[variance_kg])
+
+		changedProperty = Name
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	measure 'Variance Percent (weighted)' =
+			
+			-- soma das variacoes / soma do planejado; nunca AVERAGE(variance_percent)
+			DIVIDE([Total Variance Kg], [Total Planned Resin Kg]) * 100
+		formatString: 0.00
+
+	column machine
+		dataType: string
+		sourceLineageTag: machine
+		summarizeBy: none
+		sourceColumn: machine
+
+		annotation SummarizationSetBy = Automatic
+
+	column order_number
+		dataType: string
+		sourceLineageTag: order_number
+		summarizeBy: none
+		sourceColumn: order_number
+
+		annotation SummarizationSetBy = Automatic
+
+	column product_item_code
+		dataType: string
+		sourceLineageTag: product_item_code
+		summarizeBy: none
+		sourceColumn: product_item_code
+
+		annotation SummarizationSetBy = Automatic
+
+	column product_description
+		dataType: string
+		sourceLineageTag: product_description
+		summarizeBy: none
+		sourceColumn: product_description
+
+		annotation SummarizationSetBy = Automatic
+
+	column started_at
+		dataType: dateTime
+		formatString: General Date
+		sourceLineageTag: started_at
+		summarizeBy: none
+		sourceColumn: started_at
+
+		annotation SummarizationSetBy = Automatic
+
+	column ended_at
+		dataType: dateTime
+		formatString: General Date
+		sourceLineageTag: ended_at
+		summarizeBy: none
+		sourceColumn: ended_at
+
+		annotation SummarizationSetBy = Automatic
+
+	column duration_minutes
+		dataType: double
+		sourceLineageTag: duration_minutes
+		summarizeBy: sum
+		sourceColumn: duration_minutes
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column sap_status
+		dataType: string
+		sourceLineageTag: sap_status
+		summarizeBy: none
+		sourceColumn: sap_status
+
+		annotation SummarizationSetBy = Automatic
+
+	column planned_resin_total_kg
+		dataType: double
+		sourceLineageTag: planned_resin_total_kg
+		summarizeBy: sum
+		sourceColumn: planned_resin_total_kg
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column actual_consumed_total_kg
+		dataType: double
+		sourceLineageTag: actual_consumed_total_kg
+		summarizeBy: sum
+		sourceColumn: actual_consumed_total_kg
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column variance_kg
+		dataType: double
+		sourceLineageTag: variance_kg
+		summarizeBy: sum
+		sourceColumn: variance_kg
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column variance_percent
+		dataType: double
+		sourceLineageTag: variance_percent
+		summarizeBy: sum
+		sourceColumn: variance_percent
+
+		annotation SummarizationSetBy = Automatic
+
+		annotation PBI_FormatHint = {"isGeneralNumber":true}
+
+	column windows_count
+		dataType: int64
+		formatString: 0
+		sourceLineageTag: windows_count
+		summarizeBy: sum
+		sourceColumn: windows_count
+
+		annotation SummarizationSetBy = Automatic
+
+	column windows_without_consumption
+		dataType: int64
+		formatString: 0
+		sourceLineageTag: windows_without_consumption
+		summarizeBy: sum
+		sourceColumn: windows_without_consumption
+
+		annotation SummarizationSetBy = Automatic
+
+	column dosage_control_status
+		dataType: string
+		sourceLineageTag: dosage_control_status
+		summarizeBy: none
+		sourceColumn: dosage_control_status
+
+		annotation SummarizationSetBy = Automatic
+
+	column _gold_loaded_at
+		dataType: dateTime
+		formatString: General Date
+		sourceLineageTag: _gold_loaded_at
+		summarizeBy: none
+		sourceColumn: _gold_loaded_at
+
+		annotation SummarizationSetBy = Automatic
+
+	column sap_synced_at
+		dataType: dateTime
+		formatString: General Date
+		sourceLineageTag: sap_synced_at
+		summarizeBy: none
+		sourceColumn: sap_synced_at
+
+		annotation SummarizationSetBy = Automatic
+
+	partition gold_manufacturing_dosage_control = entity
+		mode: directLake
+		source
+			entityName: gold_manufacturing_dosage_control
+			schemaName: dbo
+			expressionSource: 'DirectLake - lh_manufacturing'
+

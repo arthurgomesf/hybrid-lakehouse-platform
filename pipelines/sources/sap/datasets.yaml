@@ -1,0 +1,50 @@
+source:
+  name: sap
+  domain: finance
+  engine: hana
+  description: Extracoes do SAP Business One (HANA) para a landing e posterior carga no lakehouse.
+
+defaults:
+  window_days: 7
+  start_date: "2026-01-01"
+  file_format: parquet
+  timezone: UTC
+
+# Fluxo: landing -> Bronze (entrada universal) -> Silver.
+#
+# load_mode por dataset (depende do que cada run entrega, nao da ferramenta):
+# - incremental: a extracao entrega uma janela por coluna de atualizacao
+#   (watermark); o Bronze faz MERGE por chave e mantem a versao mais recente;
+# - full: a extracao entrega o conjunto inteiro (snapshot); o Bronze reescreve a
+#   tabela com o ultimo run completo.
+#
+# O schema de cada dataset vem do contrato (schema.fields): o exportador grava o
+# Parquet com esses tipos e falha se a query devolver coluna fora do contrato.
+
+datasets:
+  - name: purchase_invoices
+    landing_dataset: purchase_invoices
+    contract: contracts/sources/sap/sap-purchase-invoices.yaml
+    source_sql: sql/purchase_invoices.sql
+    load_mode: incremental
+    upsert_keys: [doc_entry]
+    bronze_table: bronze_sap_purchase_invoices
+    silver_table: silver_finance_purchase_invoices
+
+  - name: return_transfers
+    landing_dataset: return_transfers
+    contract: contracts/sources/sap/sap-return-transfers.yaml
+    source_sql: sql/return_transfers.sql
+    load_mode: full
+    upsert_keys: [doc_entry, line_num]
+    bronze_table: bronze_sap_return_transfers
+    silver_table: silver_finance_return_transfers
+
+  - name: service_invoices
+    landing_dataset: service_invoices
+    contract: contracts/sources/sap/sap-service-invoices.yaml
+    source_sql: sql/service_invoices.sql
+    load_mode: full
+    upsert_keys: [company, doc_entry]
+    bronze_table: bronze_sap_service_invoices
+    silver_table: silver_finance_service_invoices

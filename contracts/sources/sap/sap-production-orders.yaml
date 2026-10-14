@@ -1,0 +1,246 @@
+contract:
+  name: sap-production-orders
+  type: source
+  domain: manufacturing
+  owner: manufatura
+  technical_owner: data-engineering
+  source_system: sap-service-layer
+  description: Ordens de producao e componentes planejados obtidos do SAP via Service Layer para comparacao com consumo real dosado.
+  status: draft
+  version: 0.1.0
+
+dataset:
+  name: sap_production_orders
+  layer: source-cache-operational-store
+  storage_location: timescaledb-on-premise
+  physical_tables:
+    - public.sap_production_orders
+    - public.sap_production_order_components
+  fabric_replication: candidate_for_bronze_or_silver_lightweight
+  refresh_frequency: periodic_polling
+  grain: one row per SAP production order and one row per production order component
+  primary_keys:
+    orders:
+      - order_number
+    components:
+      - order_number
+      - line_number
+
+source:
+  application: data-collector-sap-sync
+  api: SAP Service Layer
+  endpoint: /ProductionOrders
+  lookup_field: SAP_ORDER_NUMBER_FIELD
+  database: motan_datalake
+  order_discovery_source: public.vw_order_number_changes
+
+orders_schema:
+  table: public.sap_production_orders
+  fields:
+    - name: order_number
+      type: string
+      nullable: true
+      description: Numero da ordem de producao no SAP.
+      source: SAP ProductionOrders DocumentNumber or configured lookup field
+
+    - name: sap_abs_entry
+      type: integer
+      nullable: true
+      description: Identificador interno absoluto da OP no SAP, quando disponivel.
+      source: SAP AbsoluteEntry, AbsEntry or DocEntry
+
+    - name: sap_document_number
+      type: integer
+      nullable: true
+      description: Numero de documento da OP no SAP.
+      source: SAP DocumentNumber or DocNum
+
+    - name: status
+      type: string
+      nullable: true
+      description: Status tecnico da OP no SAP.
+      source: SAP ProductionOrderStatus or Status
+
+    - name: product_item_code
+      type: string
+      nullable: true
+      description: Codigo do item/produto produzido pela OP.
+      source: SAP ItemNo, ItemCode or ProductNo
+
+    - name: product_description
+      type: string
+      nullable: true
+      description: Descricao do produto produzido pela OP.
+      source: SAP ProductDescription or ItemName
+
+    - name: planned_quantity
+      type: numeric
+      nullable: true
+      description: Quantidade planejada de producao da OP.
+      source: SAP PlannedQuantity or PlannedQty
+
+    - name: completed_quantity
+      type: numeric
+      nullable: true
+      description: Quantidade concluida registrada na OP.
+      source: SAP CompletedQuantity or CmpltQty
+
+    - name: planned_resin_total_kg
+      type: numeric
+      nullable: true
+      unit: kg
+      description: Total planejado de resina/material relevante para comparacao com o dosado real.
+      source: calculated_from_included_components
+
+    - name: resin_filter_applied
+      type: string
+      nullable: true
+      description: Regra aplicada para selecionar componentes incluidos no total planejado de resina.
+      source: sap_sync_application
+
+    - name: start_date
+      type: date
+      nullable: true
+      description: Data inicial planejada da OP no SAP.
+      source: SAP StartDate or ProductionOrderStartDate
+
+    - name: due_date
+      type: date
+      nullable: true
+      description: Data final/prevista da OP no SAP.
+      source: SAP DueDate or ProductionOrderDueDate
+
+    - name: raw_data
+      type: jsonb
+      nullable: true
+      description: Payload bruto da OP retornado pela Service Layer.
+      source: SAP Service Layer response
+
+    - name: synced_at
+      type: timestamptz
+      nullable: true
+      description: Timestamp UTC da ultima sincronizacao da OP para o banco operacional.
+      source: sap_sync_application
+
+    - name: created_at
+      type: timestamptz
+      nullable: true
+      description: Timestamp UTC em que o registro foi criado no banco operacional.
+      source: data_collector_application
+
+components_schema:
+  table: public.sap_production_order_components
+  fields:
+    - name: order_number
+      type: string
+      nullable: true
+      description: Numero da OP associada ao componente.
+      source: parent_production_order
+
+    - name: line_number
+      type: integer
+      nullable: true
+      description: Numero da linha do componente na OP.
+      source: SAP LineNumber, LineNum, VisualOrder or generated index
+
+    - name: item_code
+      type: string
+      nullable: true
+      description: Codigo do item componente planejado.
+      source: SAP ItemNo, ItemCode or ComponentItemCode
+
+    - name: item_description
+      type: string
+      nullable: true
+      description: Descricao do componente planejado.
+      source: SAP ItemName, ItemDescription or Description
+
+    - name: planned_quantity
+      type: numeric
+      nullable: true
+      description: Quantidade planejada do componente.
+      source: SAP PlannedQuantity, PlannedQty or BaseQuantity
+
+    - name: issued_quantity
+      type: numeric
+      nullable: true
+      description: Quantidade baixada/emitida do componente no SAP.
+      source: SAP IssuedQuantity or IssuedQty
+
+    - name: warehouse
+      type: string
+      nullable: true
+      description: Deposito/armazem do componente no SAP.
+      source: SAP Warehouse or WarehouseCode
+
+    - name: uom
+      type: string
+      nullable: true
+      description: Unidade de medida do componente no SAP.
+      source: SAP UoM, UomCode or InventoryUOM
+
+    - name: included_in_resin_total
+      type: boolean
+      nullable: true
+      description: Indica se o componente entra no total planejado de resina/material para comparacao.
+      source: sap_sync_resin_filter_rule
+
+    - name: raw_data
+      type: jsonb
+      nullable: true
+      description: Payload bruto da linha do componente retornado pela Service Layer.
+      source: SAP Service Layer response
+
+    - name: synced_at
+      type: timestamptz
+      nullable: true
+      description: Timestamp UTC da ultima sincronizacao do componente para o banco operacional.
+      source: sap_sync_application
+
+    - name: created_at
+      type: timestamptz
+      nullable: true
+      description: Timestamp UTC em que o registro foi criado no banco operacional.
+      source: data_collector_application
+
+business_rules:
+  resin_component_filter:
+    description: Regra atual para incluir componentes no total planejado de resina/material.
+    conditions:
+      - planned_quantity > 0
+      - raw_data.ItemType = pit_Item
+      - raw_data.U_Grp_Item nao contem EMBALAGEM
+      - raw_data.U_Grp_Item diferente de COMPONENTES
+      - opcionalmente item_code deve iniciar com algum prefixo configurado em SAP_RESIN_ITEM_CODE_PREFIXES
+
+quality_rules:
+  - name: order_number_should_be_present
+    description: order_number deve estar preenchido para correlacao com Motan e INJET.
+    severity: critical
+
+  - name: planned_resin_total_should_be_present_for_comparison
+    description: planned_resin_total_kg deve estar preenchido para comparacao real vs planejado.
+    severity: warning
+
+  - name: component_line_should_be_unique_per_order
+    description: A combinacao order_number e line_number deve ser unica nos componentes.
+    severity: critical
+
+  - name: synced_at_should_be_recent
+    description: synced_at deve estar dentro da janela esperada de atualizacao para analises recentes.
+    severity: warning
+
+known_limitations:
+  - O contrato depende da disponibilidade da SAP Service Layer.
+  - O total planejado de resina/material e calculado por regra tecnica que precisa validacao da manufatura.
+  - raw_data pode mudar se o payload da Service Layer mudar.
+  - Nem toda OP observada no Motan necessariamente possui plano SAP sincronizado.
+  - planned_resin_total_kg pode nao representar todo material relevante se a regra de filtro estiver incompleta.
+
+open_questions:
+  - SAP_ORDER_NUMBER_FIELD oficial deve ser DocumentNumber, DocNum ou outro campo?
+  - A unidade oficial de planned_resin_total_kg e sempre kg?
+  - A regra de filtro de resina/material esta validada pela manufatura?
+  - Quais status SAP devem ser considerados validos para producao?
+  - OP fora da data SAP deve bloquear comparacao ou apenas sinalizar risco?
+  - Qual frequencia esperada de sincronizacao SAP para o Fabric?
